@@ -40,6 +40,7 @@ export type NodeItem = {
 export type AlertItem = {
   id: string;
   node: string;
+  nodeId?: string;
   title: string;
   detail: string;
   time: string;
@@ -47,8 +48,10 @@ export type AlertItem = {
 };
 
 export type ServiceItem = {
+  id?: string;
   name: string;
   node: string;
+  nodeId?: string;
   protocol: string;
   latency: number;
   status: NodeStatus;

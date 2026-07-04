@@ -36,12 +36,46 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { alerts, fleetTrend, nodes, services, type NodeItem, type NodeStatus } from "./data";
+import {
+  alerts as fallbackAlerts,
+  fleetTrend as fallbackFleetTrend,
+  nodes as fallbackNodes,
+  services as fallbackServices,
+  type AlertItem,
+  type NodeItem,
+  type NodeStatus,
+  type ServiceItem
+} from "./data";
 
 type Filter = "all" | NodeStatus;
 type Mode = "fleet" | "traffic" | "security";
 type View = "overview" | "nodes" | "services" | "alerts" | "security";
 type ThemeMode = "light" | "dark";
+type ApiState = "live" | "fallback";
+
+type DashboardTile = {
+  key: string;
+  label: string;
+  value: string;
+  note: string;
+};
+
+type DashboardData = {
+  generatedAt?: string;
+  counts?: {
+    nodes: number;
+    online: number;
+    warning: number;
+    offline: number;
+    alerts: number;
+    services: number;
+  };
+  tiles?: DashboardTile[];
+  fleetTrend: typeof fallbackFleetTrend;
+  nodes: NodeItem[];
+  services: ServiceItem[];
+  alerts: AlertItem[];
+};
 
 const statusText: Record<NodeStatus, string> = {
   online: "在线",
@@ -49,27 +83,95 @@ const statusText: Record<NodeStatus, string> = {
   offline: "离线"
 };
 
+const apiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
+
+const defaultSpecs: NodeItem["specs"] = {
+  cpuModel: "Unknown CPU",
+  cores: "unknown",
+  memory: "unknown",
+  disk: "unknown",
+  bandwidth: "unknown"
+};
+
+const fallbackDashboard: DashboardData = {
+  fleetTrend: fallbackFleetTrend,
+  nodes: fallbackNodes,
+  services: fallbackServices,
+  alerts: fallbackAlerts
+};
+
 function getInitialTheme(): ThemeMode {
   return localStorage.getItem("lattice-theme") === "dark" ? "dark" : "light";
 }
 
 function LatticeApp() {
-  const [selectedId, setSelectedId] = useState(nodes[1].id);
+  const [dashboard, setDashboard] = useState<DashboardData>(fallbackDashboard);
+  const [apiState, setApiState] = useState<ApiState>("fallback");
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState(fallbackNodes[1].id);
   const [filter, setFilter] = useState<Filter>("all");
   const [mode, setMode] = useState<Mode>("fleet");
   const [view, setView] = useState<View>("overview");
   const [query, setQuery] = useState("");
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
+  const nodes = dashboard.nodes;
+  const services = dashboard.services;
+  const alerts = dashboard.alerts;
+  const fleetTrend = dashboard.fleetTrend;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("lattice-theme", theme);
   }, [theme]);
 
-  const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
+  useEffect(() => {
+    let active = true;
+    let controller: AbortController | null = null;
+
+    const load = async () => {
+      controller?.abort();
+      controller = new AbortController();
+      try {
+        const nextDashboard = await fetchDashboard(controller.signal);
+        if (!active) return;
+        setDashboard(nextDashboard);
+        setApiState("live");
+        setApiError(null);
+      } catch (error) {
+        if (!active || controller.signal.aborted) return;
+        setApiState("fallback");
+        setApiError(error instanceof Error ? error.message : "API 连接失败");
+      }
+    };
+
+    void load();
+    const timer = window.setInterval(load, 30000);
+    return () => {
+      active = false;
+      controller?.abort();
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const refreshDashboard = () => {
+    void fetchDashboard()
+      .then((nextDashboard) => {
+        setDashboard(nextDashboard);
+        setApiState("live");
+        setApiError(null);
+      })
+      .catch((error) => {
+        setApiState("fallback");
+        setApiError(error instanceof Error ? error.message : "API 连接失败");
+      });
+  };
+
+  const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0] ?? fallbackNodes[0];
   const onlineCount = nodes.filter((node) => node.status === "online").length;
   const warningCount = nodes.filter((node) => node.status === "warning").length;
   const offlineCount = nodes.filter((node) => node.status === "offline").length;
+  const tileValue = (key: string, fallback: string) => dashboard.tiles?.find((tile) => tile.key === key)?.value ?? fallback;
+  const tileNote = (key: string, fallback: string) => dashboard.tiles?.find((tile) => tile.key === key)?.note ?? fallback;
 
   const selectView = (nextView: View) => {
     setView(nextView);
@@ -142,6 +244,9 @@ function LatticeApp() {
           <div>
             <p className="eyebrow">NOC / Asia-Shanghai</p>
             <h1>服务器状态调度台</h1>
+            <p className={clsx("api-state", apiState)} title={apiError ?? undefined}>
+              {apiState === "live" ? "API 实时数据" : "本地演示数据"}
+            </p>
           </div>
 
           <div className="top-actions">
@@ -160,7 +265,7 @@ function LatticeApp() {
             >
               {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-            <button className="icon-button" title="刷新">
+            <button className="icon-button" onClick={refreshDashboard} title="刷新">
               <RefreshCcw size={18} />
             </button>
             <button className="icon-button" title="设置">
@@ -185,17 +290,17 @@ function LatticeApp() {
         </section>
 
         <section className="metrics-grid" aria-label="核心指标">
-          <MetricTile icon={<Server size={19} />} label="在线节点" value={`${onlineCount}/${nodes.length}`} accent="mint" note={`${warningCount} 个注意`} />
-          <MetricTile icon={<AlertTriangle size={19} />} label="活跃告警" value={String(alerts.length)} accent="amber" note={`${offlineCount} 个离线`} />
-          <MetricTile icon={<Wifi size={19} />} label="平均延迟" value="31 ms" accent="cyan" note="较昨日 -8%" />
-          <MetricTile icon={<Database size={19} />} label="今日出站" value="624 GB" accent="coral" note="峰值 91 MB/s" />
+          <MetricTile icon={<Server size={19} />} label="在线节点" value={tileValue("onlineNodes", `${onlineCount}/${nodes.length}`)} accent="mint" note={tileNote("onlineNodes", `${warningCount} 个注意`)} />
+          <MetricTile icon={<AlertTriangle size={19} />} label="活跃告警" value={tileValue("activeAlerts", String(alerts.length))} accent="amber" note={tileNote("activeAlerts", `${offlineCount} 个离线`)} />
+          <MetricTile icon={<Wifi size={19} />} label="平均延迟" value={tileValue("avgPing", "0 ms")} accent="cyan" note={tileNote("avgPing", "实时计算")} />
+          <MetricTile icon={<Database size={19} />} label="今日出站" value={tileValue("dailyEgress", "0 GB")} accent="coral" note={tileNote("dailyEgress", "节点累计")} />
         </section>
 
         <section className={clsx("main-grid", `view-${view}`)}>
           {(view === "overview" || view === "nodes") && (
             <section className="fabric-panel">
               <PanelHeader icon={<Globe2 size={18} />} title="实时网络织图" action="6 个区域" />
-              <Topology selected={selected} onSelect={setSelectedId} />
+              <Topology nodes={nodes} selected={selected} onSelect={setSelectedId} />
             </section>
           )}
 
@@ -257,7 +362,7 @@ function LatticeApp() {
                 {services.map((service) => (
                   <button
                     className={clsx("service-row", service.node === selected.name && "selected")}
-                    key={service.name}
+                    key={service.id ?? service.name}
                     onClick={() => selectNodeByName(service.node)}
                     type="button"
                   >
@@ -280,6 +385,7 @@ function LatticeApp() {
               onlineCount={onlineCount}
               warningCount={warningCount}
               offlineCount={offlineCount}
+              totalNodes={nodes.length}
             />
           )}
 
@@ -308,6 +414,38 @@ function LatticeApp() {
       </section>
     </main>
   );
+}
+
+async function fetchDashboard(signal?: AbortSignal): Promise<DashboardData> {
+  const response = await fetch(`${apiBase}/api/dashboard`, {
+    headers: { Accept: "application/json" },
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`API ${response.status}`);
+  }
+
+  const payload = (await response.json()) as DashboardData;
+  return {
+    ...payload,
+    fleetTrend: payload.fleetTrend ?? fallbackFleetTrend,
+    nodes: (payload.nodes ?? []).map(withNodeDefaults),
+    services: payload.services ?? [],
+    alerts: payload.alerts ?? []
+  };
+}
+
+function withNodeDefaults(node: NodeItem): NodeItem {
+  return {
+    ...node,
+    specs: {
+      ...defaultSpecs,
+      ...(node.specs ?? {})
+    },
+    tags: node.tags ?? [],
+    trend: node.trend ?? []
+  };
 }
 
 function modeForView(view: View): Mode {
@@ -410,12 +548,14 @@ function SecurityPanel({
   selected,
   onlineCount,
   warningCount,
-  offlineCount
+  offlineCount,
+  totalNodes
 }: {
   selected: NodeItem;
   onlineCount: number;
   warningCount: number;
   offlineCount: number;
+  totalNodes: number;
 }) {
   return (
     <section className="security-panel">
@@ -435,7 +575,7 @@ function SecurityPanel({
           <article className="security-card amber">
             <span>异常节点</span>
             <strong>{warningCount + offlineCount}</strong>
-            <p>{onlineCount}/{nodes.length} 在线，{offlineCount} 台离线。</p>
+            <p>{onlineCount}/{totalNodes} 在线，{offlineCount} 台离线。</p>
           </article>
         </div>
 
@@ -493,7 +633,7 @@ function SecurityCheck({
   );
 }
 
-function Topology({ selected, onSelect }: { selected: NodeItem; onSelect: (id: string) => void }) {
+function Topology({ nodes, selected, onSelect }: { nodes: NodeItem[]; selected: NodeItem; onSelect: (id: string) => void }) {
   return (
     <div className="topology">
       <div className="topology-core">

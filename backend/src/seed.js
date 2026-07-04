@@ -32,6 +32,13 @@ export const nodes = [
     rx: "2.8 TB",
     tx: "1.9 TB",
     ping: 18,
+    specs: {
+      cpuModel: "Ampere A1",
+      cores: "4 vCPU",
+      memory: "24 GB",
+      disk: "120 GB NVMe",
+      bandwidth: "1 Gbps"
+    },
     tags: ["edge", "hysteria", "prod"],
     trend: [
       { time: "12:00", cpu: 28, mem: 47, net: 18, ping: 22 },
@@ -60,6 +67,13 @@ export const nodes = [
     rx: "680 GB",
     tx: "811 GB",
     ping: 31,
+    specs: {
+      cpuModel: "Intel Xeon",
+      cores: "2 vCPU",
+      memory: "4 GB",
+      disk: "80 GB SSD",
+      bandwidth: "1 Gbps"
+    },
     tags: ["api", "node", "watch"],
     trend: [
       { time: "12:00", cpu: 51, mem: 58, net: 26, ping: 30 },
@@ -88,6 +102,13 @@ export const nodes = [
     rx: "1.1 TB",
     tx: "942 GB",
     ping: 42,
+    specs: {
+      cpuModel: "AMD EPYC",
+      cores: "4 vCPU",
+      memory: "16 GB",
+      disk: "240 GB NVMe",
+      bandwidth: "10 Gbps"
+    },
     tags: ["postgres", "backup", "eu"],
     trend: [
       { time: "12:00", cpu: 21, mem: 61, net: 12, ping: 46 },
@@ -116,6 +137,13 @@ export const nodes = [
     rx: "390 GB",
     tx: "524 GB",
     ping: 68,
+    specs: {
+      cpuModel: "Intel Xeon",
+      cores: "2 vCPU",
+      memory: "8 GB",
+      disk: "160 GB NVMe",
+      bandwidth: "2 Gbps"
+    },
     tags: ["jobs", "media", "us"],
     trend: [
       { time: "12:00", cpu: 42, mem: 35, net: 28, ping: 70 },
@@ -144,6 +172,13 @@ export const nodes = [
     rx: "1.7 TB",
     tx: "2.2 TB",
     ping: 0,
+    specs: {
+      cpuModel: "AMD EPYC",
+      cores: "2 vCPU",
+      memory: "4 GB",
+      disk: "100 GB SSD",
+      bandwidth: "1 Gbps"
+    },
     tags: ["cache", "redis", "edge"],
     trend: [
       { time: "12:00", cpu: 32, mem: 49, net: 45, ping: 36 },
@@ -172,6 +207,13 @@ export const nodes = [
     rx: "8.4 TB",
     tx: "7.1 TB",
     ping: 6,
+    specs: {
+      cpuModel: "Intel N100",
+      cores: "4 Core",
+      memory: "16 GB",
+      disk: "512 GB SSD + 2 TB HDD",
+      bandwidth: "LAN"
+    },
     tags: ["nas", "vm", "lan"],
     trend: [
       { time: "12:00", cpu: 23, mem: 68, net: 32, ping: 7 },

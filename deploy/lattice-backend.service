@@ -1,0 +1,20 @@
+[Unit]
+Description=Lattice Monitor Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/lattice-monitor/backend
+Environment=NODE_ENV=production
+Environment=PORT=8091
+Environment=DB_PATH=/opt/lattice-monitor/backend/data/store.json
+Environment=AGENT_TOKEN=change-this-token
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=3
+MemoryMax=256M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

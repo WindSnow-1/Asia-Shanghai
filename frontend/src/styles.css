@@ -262,6 +262,24 @@ button {
   text-transform: uppercase;
 }
 
+.api-state {
+  width: fit-content;
+  margin: 8px 0 0;
+  padding: 5px 8px;
+  border: 1px solid rgba(54, 211, 153, 0.24);
+  border-radius: 999px;
+  color: var(--mint);
+  background: rgba(54, 211, 153, 0.08);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.api-state.fallback {
+  color: var(--amber);
+  border-color: rgba(246, 195, 91, 0.28);
+  background: rgba(246, 195, 91, 0.08);
+}
+
 h1,
 h2,
 h3,

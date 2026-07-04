@@ -3,6 +3,13 @@ import path from "node:path";
 import { createSeedState } from "./seed.js";
 
 const VALID_STATUS = new Set(["online", "warning", "offline"]);
+const DEFAULT_SPECS = {
+  cpuModel: "Unknown CPU",
+  cores: "unknown",
+  memory: "unknown",
+  disk: "unknown",
+  bandwidth: "unknown"
+};
 
 export class JsonStore {
   constructor(filePath) {
@@ -140,6 +147,7 @@ export class JsonStore {
   withTrend(node, state) {
     return {
       ...node,
+      specs: this.normalizeSpecs(node.specs),
       trend: state.metricsByNode[node.id] ?? node.trend ?? []
     };
   }
@@ -173,7 +181,19 @@ export class JsonStore {
       rx: String(report.rx ?? "0 GB"),
       tx: String(report.tx ?? "0 GB"),
       ping: Number(report.ping ?? 0),
+      specs: this.normalizeSpecs(report.specs),
       tags: Array.isArray(report.tags) ? report.tags.map(String) : []
+    };
+  }
+
+  normalizeSpecs(specs = {}) {
+    return {
+      ...DEFAULT_SPECS,
+      cpuModel: String(specs.cpuModel ?? specs.cpu ?? DEFAULT_SPECS.cpuModel),
+      cores: String(specs.cores ?? specs.cpuCores ?? DEFAULT_SPECS.cores),
+      memory: String(specs.memory ?? specs.memTotal ?? DEFAULT_SPECS.memory),
+      disk: String(specs.disk ?? specs.diskTotal ?? DEFAULT_SPECS.disk),
+      bandwidth: String(specs.bandwidth ?? DEFAULT_SPECS.bandwidth)
     };
   }
 
