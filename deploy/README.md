@@ -20,7 +20,7 @@ npm run build
 
 ## 3. Install Backend Service
 
-Generate a token:
+Generate an agent token:
 
 ```bash
 openssl rand -hex 32
@@ -37,7 +37,10 @@ Replace:
 
 ```text
 AGENT_TOKEN=change-this-token
+ADMIN_INITIAL_PASSWORD=admin123456
 ```
+
+`SESSION_SECRET` is optional. If it is not set, the backend uses `AGENT_TOKEN` for signing dashboard sessions.
 
 Start it:
 
@@ -71,7 +74,7 @@ systemctl reload nginx
 
 ```bash
 curl http://127.0.0.1:8091/health
-curl http://127.0.0.1:8091/api/dashboard
+curl http://127.0.0.1:8091/api/session
 ```
 
 Open:
@@ -79,3 +82,5 @@ Open:
 ```text
 http://your-domain
 ```
+
+First login is `admin / admin123456` unless you changed `ADMIN_INITIAL_PASSWORD`.

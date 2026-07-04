@@ -1,16 +1,24 @@
 import http from "node:http";
 import { JsonStore } from "./store.js";
-import { requireAgentToken } from "./auth.js";
+import {
+  clearSessionCookie,
+  createAuthConfig,
+  issueSessionCookie,
+  readSession,
+  requireAgentToken,
+  requireDashboardSession
+} from "./auth.js";
 
 const JSON_LIMIT_BYTES = 1024 * 1024;
 
 export function createApp(options = {}) {
   const store = options.store ?? new JsonStore(options.dbPath);
   const agentToken = options.agentToken ?? process.env.AGENT_TOKEN ?? "dev-agent-token-change-me";
+  const authConfig = createAuthConfig(options.auth);
 
   return http.createServer(async (request, response) => {
     try {
-      setCors(response);
+      setCors(request, response);
 
       if (request.method === "OPTIONS") {
         response.writeHead(204);
@@ -25,15 +33,53 @@ export function createApp(options = {}) {
         return sendJson(response, 200, { ok: true, name: "lattice-backend", time: new Date().toISOString() });
       }
 
+      if (route === "GET /api/session") {
+        const session = readSession(request, authConfig.sessionSecret);
+        if (!session) return sendJson(response, 200, { authenticated: false });
+        return sendJson(response, 200, {
+          authenticated: true,
+          user: await store.adminProfile(authConfig)
+        });
+      }
+
+      if (route === "POST /api/login") {
+        const body = await readJson(request);
+        const ok = await store.verifyAdminLogin(body.username, body.password, authConfig);
+        if (!ok) return sendJson(response, 401, { error: "invalid_credentials" });
+
+        issueSessionCookie(response, authConfig.username, authConfig);
+        return sendJson(response, 200, {
+          ok: true,
+          user: await store.adminProfile(authConfig)
+        });
+      }
+
+      if (route === "POST /api/logout") {
+        clearSessionCookie(response, authConfig);
+        return sendJson(response, 200, { ok: true });
+      }
+
+      if (route === "POST /api/settings/password") {
+        requireDashboardSession(request, authConfig);
+        const body = await readJson(request);
+        return sendJson(response, 200, {
+          ok: true,
+          user: await store.changeAdminPassword(body.currentPassword, body.newPassword, authConfig)
+        });
+      }
+
       if (route === "GET /api/dashboard") {
+        requireDashboardSession(request, authConfig);
         return sendJson(response, 200, await store.dashboard());
       }
 
       if (route === "GET /api/nodes") {
+        requireDashboardSession(request, authConfig);
         return sendJson(response, 200, await store.nodes());
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/api/nodes/")) {
+        requireDashboardSession(request, authConfig);
         const parts = url.pathname.split("/").filter(Boolean);
         const id = decodeURIComponent(parts[2] ?? "");
 
@@ -48,14 +94,17 @@ export function createApp(options = {}) {
       }
 
       if (route === "GET /api/fleet-trend") {
+        requireDashboardSession(request, authConfig);
         return sendJson(response, 200, await store.fleetTrend());
       }
 
       if (route === "GET /api/services") {
+        requireDashboardSession(request, authConfig);
         return sendJson(response, 200, await store.services());
       }
 
       if (route === "GET /api/alerts") {
+        requireDashboardSession(request, authConfig);
         return sendJson(response, 200, await store.alerts());
       }
 
@@ -82,10 +131,14 @@ export function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
-function setCors(response) {
-  response.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN ?? "*");
+function setCors(request, response) {
+  const origin = request.headers.origin;
+  const configuredOrigin = process.env.CORS_ORIGIN;
+  response.setHeader("Access-Control-Allow-Origin", configuredOrigin && configuredOrigin !== "*" ? configuredOrigin : origin ?? "*");
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Agent-Token");
+  response.setHeader("Access-Control-Allow-Credentials", "true");
+  if (origin) response.setHeader("Vary", "Origin");
 }
 
 async function readJson(request) {

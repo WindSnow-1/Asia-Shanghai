@@ -48,6 +48,27 @@ Smoke test:
 npm run test:smoke
 ```
 
+## Login
+
+The dashboard requires a backend session before `/api/*` data can be read.
+
+Default first login:
+
+```text
+username: admin
+password: admin123456
+```
+
+Change the password from the settings button after logging in. The backend stores a scrypt password hash in `backend/data/store.json`; it does not store the password in plain text.
+
+Optional production environment variables:
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_INITIAL_PASSWORD=your-first-password
+SESSION_SECRET=your-random-session-secret
+```
+
 ## Security Boundary
 
 The backend is intentionally read-only. It does not provide remote shell, file management, scheduled command execution, or task execution. Agents only report metrics to the API.

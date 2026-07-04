@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { hashPassword, safeEqual, verifyPassword } from "./auth.js";
 import { createSeedState } from "./seed.js";
 
 const VALID_STATUS = new Set(["online", "warning", "offline"]);
@@ -36,6 +37,40 @@ export class JsonStore {
     await mkdir(path.dirname(this.filePath), { recursive: true });
     this.state.updatedAt = new Date().toISOString();
     await writeFile(this.filePath, `${JSON.stringify(this.state, null, 2)}\n`);
+  }
+
+  async adminProfile(config) {
+    const auth = await this.ensureAuth(config);
+    return {
+      username: auth.username,
+      usingDefaultPassword: Boolean(auth.usingDefaultPassword),
+      passwordChangedAt: auth.passwordChangedAt ?? null
+    };
+  }
+
+  async verifyAdminLogin(username, password, config) {
+    const auth = await this.ensureAuth(config);
+    if (!safeEqual(username, auth.username)) return false;
+    return verifyPassword(password, auth.passwordHash);
+  }
+
+  async changeAdminPassword(currentPassword, nextPassword, config) {
+    const auth = await this.ensureAuth(config);
+    if (!await verifyPassword(currentPassword, auth.passwordHash)) {
+      throw Object.assign(new Error("Current password is incorrect"), { statusCode: 401 });
+    }
+
+    const password = String(nextPassword ?? "");
+    if (password.length < 8) {
+      throw Object.assign(new Error("New password must be at least 8 characters"), { statusCode: 400 });
+    }
+
+    auth.passwordHash = await hashPassword(password);
+    auth.usingDefaultPassword = false;
+    auth.passwordChangedAt = new Date().toISOString();
+    await this.save();
+
+    return this.adminProfile(config);
   }
 
   async dashboard() {
@@ -138,6 +173,22 @@ export class JsonStore {
       node: this.withTrend(nextNode, state),
       alerts: state.alerts.filter((alert) => alert.nodeId === nextNode.id)
     };
+  }
+
+  async ensureAuth(config) {
+    const state = await this.load();
+    if (!state.auth?.passwordHash) {
+      state.auth = {
+        username: config.username,
+        passwordHash: await hashPassword(config.initialPassword),
+        usingDefaultPassword: true,
+        createdAt: new Date().toISOString(),
+        passwordChangedAt: null
+      };
+      await this.save();
+    }
+
+    return state.auth;
   }
 
   nodesFromState(state) {

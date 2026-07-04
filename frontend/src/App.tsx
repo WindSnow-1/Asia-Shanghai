@@ -9,8 +9,10 @@ import {
   Gauge,
   Globe2,
   HardDrive,
+  KeyRound,
   LayoutDashboard,
   LockKeyhole,
+  LogOut,
   Moon,
   Network,
   RadioTower,
@@ -22,7 +24,9 @@ import {
   SlidersHorizontal,
   Sun,
   ThermometerSun,
+  UserRound,
   Wifi,
+  X,
   Zap
 } from "lucide-react";
 import {
@@ -49,6 +53,13 @@ type Mode = "fleet" | "traffic" | "security";
 type View = "overview" | "nodes" | "services" | "alerts" | "security";
 type ThemeMode = "light" | "dark";
 type ApiState = "live" | "fallback";
+type AuthStatus = "checking" | "authenticated" | "anonymous";
+
+type AuthUser = {
+  username: string;
+  usingDefaultPassword?: boolean;
+  passwordChangedAt?: string | null;
+};
 
 type DashboardTile = {
   key: string;
@@ -74,6 +85,11 @@ type DashboardData = {
   alerts: AlertItem[];
 };
 
+type SessionResponse = {
+  authenticated: boolean;
+  user?: AuthUser;
+};
+
 const statusText: Record<NodeStatus, string> = {
   online: "在线",
   warning: "注意",
@@ -81,6 +97,15 @@ const statusText: Record<NodeStatus, string> = {
 };
 
 const apiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
+
+class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
 
 const defaultSpecs: NodeItem["specs"] = {
   cpuModel: "Unknown CPU",
@@ -105,6 +130,9 @@ function LatticeApp() {
   const [dashboard, setDashboard] = useState<DashboardData>(emptyDashboard);
   const [apiState, setApiState] = useState<ApiState>("fallback");
   const [apiError, setApiError] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [mode, setMode] = useState<Mode>("fleet");
@@ -123,6 +151,33 @@ function LatticeApp() {
 
   useEffect(() => {
     let active = true;
+
+    void fetchSession()
+      .then((session) => {
+        if (!active) return;
+        if (session.authenticated && session.user) {
+          setAuthUser(session.user);
+          setAuthStatus("authenticated");
+        } else {
+          setAuthUser(null);
+          setAuthStatus("anonymous");
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setAuthUser(null);
+        setAuthStatus("anonymous");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+
+    let active = true;
     let controller: AbortController | null = null;
 
     const load = async () => {
@@ -136,8 +191,7 @@ function LatticeApp() {
         setApiError(null);
       } catch (error) {
         if (!active || controller.signal.aborted) return;
-        setApiState("fallback");
-        setApiError(error instanceof Error ? error.message : "API 连接失败");
+        handleApiError(error);
       }
     };
 
@@ -148,7 +202,7 @@ function LatticeApp() {
       controller?.abort();
       window.clearInterval(timer);
     };
-  }, []);
+  }, [authStatus]);
 
   const refreshDashboard = () => {
     void fetchDashboard()
@@ -158,9 +212,65 @@ function LatticeApp() {
         setApiError(null);
       })
       .catch((error) => {
-        setApiState("fallback");
-        setApiError(error instanceof Error ? error.message : "API 连接失败");
+        handleApiError(error);
       });
+  };
+
+  const handleApiError = (error: unknown) => {
+    if (error instanceof ApiError && error.status === 401) {
+      setAuthStatus("anonymous");
+      setAuthUser(null);
+      setDashboard(emptyDashboard);
+      setSettingsOpen(false);
+      return;
+    }
+
+    setApiState("fallback");
+    setApiError(error instanceof Error ? error.message : "API 连接失败");
+  };
+
+  const handleLogin = async (username: string, password: string) => {
+    const response = await fetch(`${apiBase}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ username, password })
+    });
+
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? "账号或密码不对" : `登录失败：${response.status}`);
+    }
+
+    const payload = await response.json() as { user: AuthUser };
+    setAuthUser(payload.user);
+    setAuthStatus("authenticated");
+  };
+
+  const handleLogout = async () => {
+    await fetch(`${apiBase}/api/logout`, {
+      method: "POST",
+      credentials: "include"
+    });
+    setAuthStatus("anonymous");
+    setAuthUser(null);
+    setDashboard(emptyDashboard);
+    setSettingsOpen(false);
+  };
+
+  const handleChangePassword = async (currentPassword: string, newPassword: string) => {
+    const response = await fetch(`${apiBase}/api/settings/password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? "当前密码不对" : "密码至少 8 位");
+    }
+
+    const payload = await response.json() as { user: AuthUser };
+    setAuthUser(payload.user);
   };
 
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0] ?? null;
@@ -205,6 +315,28 @@ function LatticeApp() {
       return statusMatch && queryMatch;
     });
   }, [filter, query]);
+
+  if (authStatus === "checking") {
+    return (
+      <AuthShell theme={theme} onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
+        <div className="auth-card compact">
+          <div className="auth-mark">
+            <Network size={24} />
+          </div>
+          <strong>正在检查登录状态</strong>
+          <span>连接 Lattice Monitor 后端...</span>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  if (authStatus === "anonymous") {
+    return (
+      <AuthShell theme={theme} onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
+        <LoginPanel onLogin={handleLogin} />
+      </AuthShell>
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -255,6 +387,11 @@ function LatticeApp() {
                 placeholder="搜索节点、地区、标签"
               />
             </label>
+            {authUser?.usingDefaultPassword ? <span className="password-warning">请修改初始密码</span> : null}
+            <span className="user-pill" title={`已登录：${authUser?.username ?? "admin"}`}>
+              <UserRound size={15} />
+              {authUser?.username ?? "admin"}
+            </span>
             <button
               className="icon-button theme-toggle"
               title={theme === "dark" ? "切换白天模式" : "切换黑夜模式"}
@@ -265,8 +402,11 @@ function LatticeApp() {
             <button className="icon-button" onClick={refreshDashboard} title="刷新">
               <RefreshCcw size={18} />
             </button>
-            <button className="icon-button" title="设置">
+            <button className="icon-button" title="设置" onClick={() => setSettingsOpen(true)}>
               <Settings size={18} />
+            </button>
+            <button className="icon-button" title="退出登录" onClick={handleLogout}>
+              <LogOut size={18} />
             </button>
           </div>
         </header>
@@ -421,18 +561,39 @@ function LatticeApp() {
           )}
         </section>
       </section>
+      {settingsOpen && authUser ? (
+        <SettingsDialog
+          user={authUser}
+          onClose={() => setSettingsOpen(false)}
+          onChangePassword={handleChangePassword}
+        />
+      ) : null}
     </main>
   );
+}
+
+async function fetchSession(): Promise<SessionResponse> {
+  const response = await fetch(`${apiBase}/api/session`, {
+    headers: { Accept: "application/json" },
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    throw new ApiError(response.status, `Session ${response.status}`);
+  }
+
+  return response.json() as Promise<SessionResponse>;
 }
 
 async function fetchDashboard(signal?: AbortSignal): Promise<DashboardData> {
   const response = await fetch(`${apiBase}/api/dashboard`, {
     headers: { Accept: "application/json" },
+    credentials: "include",
     signal
   });
 
   if (!response.ok) {
-    throw new Error(`API ${response.status}`);
+    throw new ApiError(response.status, `API ${response.status}`);
   }
 
   const payload = (await response.json()) as DashboardData;
@@ -443,6 +604,199 @@ async function fetchDashboard(signal?: AbortSignal): Promise<DashboardData> {
     services: payload.services ?? [],
     alerts: payload.alerts ?? []
   };
+}
+
+function AuthShell({
+  children,
+  theme,
+  onToggleTheme
+}: {
+  children: React.ReactNode;
+  theme: ThemeMode;
+  onToggleTheme: () => void;
+}) {
+  return (
+    <main className="auth-shell">
+      <button className="icon-button auth-theme" title={theme === "dark" ? "切换白天模式" : "切换黑夜模式"} onClick={onToggleTheme}>
+        {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+      </button>
+      <section className="auth-hero">
+        <div className="auth-brand">
+          <div className="brand-mark">
+            <Network size={22} />
+          </div>
+          <div>
+            <strong>Lattice</strong>
+            <span>Monitor Console</span>
+          </div>
+        </div>
+        <div>
+          <p className="eyebrow">NOC / Asia-Shanghai</p>
+          <h1>服务器状态调度台</h1>
+          <p>登录后查看节点、服务、告警和探针上报数据。</p>
+        </div>
+      </section>
+      {children}
+    </main>
+  );
+}
+
+function LoginPanel({ onLogin }: { onLogin: (username: string, password: string) => Promise<void> }) {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      await onLogin(username.trim(), password);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "登录失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form className="auth-card" onSubmit={submit}>
+      <div className="auth-card-head">
+        <div className="auth-mark">
+          <LockKeyhole size={22} />
+        </div>
+        <div>
+          <strong>登录控制台</strong>
+          <span>请输入管理员账号密码</span>
+        </div>
+      </div>
+
+      <label className="field">
+        <span>账号</span>
+        <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+      </label>
+
+      <label className="field">
+        <span>密码</span>
+        <input
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          type="password"
+          autoComplete="current-password"
+          autoFocus
+        />
+      </label>
+
+      {error ? <p className="form-error">{error}</p> : null}
+
+      <button className="primary-button" type="submit" disabled={loading || !username.trim() || !password}>
+        {loading ? "登录中..." : "进入面板"}
+      </button>
+    </form>
+  );
+}
+
+function SettingsDialog({
+  user,
+  onClose,
+  onChangePassword
+}: {
+  user: AuthUser;
+  onClose: () => void;
+  onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+}) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+
+    if (newPassword.length < 8) {
+      setError("新密码至少 8 位");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError("两次新密码不一致");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await onChangePassword(currentPassword, newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setMessage("密码已修改");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "修改失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="settings-modal" role="dialog" aria-modal="true" aria-label="设置">
+        <header className="settings-head">
+          <div>
+            <span className="settings-icon"><KeyRound size={18} /></span>
+            <div>
+              <strong>设置</strong>
+              <p>{user.username} · {user.usingDefaultPassword ? "正在使用初始密码" : "密码已保护"}</p>
+            </div>
+          </div>
+          <button className="icon-button" title="关闭" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+
+        <form className="password-form" onSubmit={submit}>
+          <label className="field">
+            <span>当前密码</span>
+            <input
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              type="password"
+              autoComplete="current-password"
+            />
+          </label>
+          <label className="field">
+            <span>新密码</span>
+            <input
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              type="password"
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="field">
+            <span>确认新密码</span>
+            <input
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              type="password"
+              autoComplete="new-password"
+            />
+          </label>
+
+          {error ? <p className="form-error">{error}</p> : null}
+          {message ? <p className="form-success">{message}</p> : null}
+
+          <button className="primary-button" type="submit" disabled={loading || !currentPassword || !newPassword || !confirmPassword}>
+            {loading ? "保存中..." : "修改密码"}
+          </button>
+        </form>
+      </section>
+    </div>
+  );
 }
 
 function withNodeDefaults(node: NodeItem): NodeItem {
